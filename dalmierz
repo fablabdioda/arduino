@@ -1,0 +1,61 @@
+#define TRIG_PIN 4
+#define ECHO_PIN 5
+
+#define LED1 6
+#define LED2 7
+#define LED3 8
+
+long duration;
+float distance;
+
+void setup() {
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+
+  pinMode(LED1, OUTPUT);
+  pinMode(LED2, OUTPUT);
+  pinMode(LED3, OUTPUT);
+
+  Serial.begin(9600);
+}
+
+void loop() {
+  // Wyzwolenie pomiaru
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  // Odczyt echa
+  duration = pulseIn(ECHO_PIN, HIGH, 30000); // timeout ~5m
+  distance = duration * 0.034 / 2; // cm
+
+  Serial.print("Odleglosc: ");
+  Serial.print(distance);
+  Serial.println(" cm");
+
+  // Gasimy wszystkie LED
+  digitalWrite(LED1, LOW);
+  digitalWrite(LED2, LOW);
+  digitalWrite(LED3, LOW);
+
+  // Logika LED
+  if (distance > 50 || distance == 0) {   //jeśli dystans jest większy od 50 nic się nie świeci
+    // 0 LED
+  }
+  else if (distance > 30) {   //jeśli dystans jest większy od 30 (ale mniejszy od 51) LED 1 ma stan wysoki
+    digitalWrite(LED1, HIGH);
+  }
+  else if (distance > 15) {   //jeśli dystans jest większy od 15 (ale mniejszy od 31) LED 1 i 2 ma stan wysoki
+    digitalWrite(LED1, HIGH);
+    digitalWrite(LED2, HIGH);
+  }
+  else {                      //jeśli żaden poprzedni warunek nie jest spełniony wszystkie LED mają stan wysoki
+    digitalWrite(LED1, HIGH);
+    digitalWrite(LED2, HIGH);
+    digitalWrite(LED3, HIGH);
+  }
+
+  delay(200);
+}
