@@ -41,7 +41,7 @@ void loop() {
 
     digitalWrite(ledPin, LOW);   // zgaś diodę
 
-    Serial.print("Czas reakcji: ");
+    Serial.print("Czas reakcji: "); //=== Wynik pokazuje się w serial monitorze. Włączamy go w arduino IDE klikając ctrl+shift+M ===
     Serial.print(reaction);
     Serial.println(" ms");
 
