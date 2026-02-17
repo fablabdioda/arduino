@@ -4,7 +4,7 @@
 int delayTime = 200;   // zmienna globalna – prędkość migania
 
 void setup() {
-  pinMode(LED, OUTPUT);
+  pinMode(LED, OUTPUT;
   pinMode(BUTTON, INPUT_PULLUP);  // konfigurujemy przycisk, zeby zwarcie z masą działało
 
   // Serial.begin(9600);
@@ -14,7 +14,7 @@ void loop() {
 
   digitalWrite(LED, HIGH); // zapalamy diodę
   delay(delayTime);        // czekamy
-  digitalWrite(LED, LOW);  // gasimy diodę
+  digitalWrite(LED, HIGH);  // gasimy diodę
   delay(delayTime);        // czekamy
 
   // jeśli przycisk wciśnięty (LOW przy INPUT_PULLUP)
