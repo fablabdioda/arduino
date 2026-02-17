@@ -1,4 +1,4 @@
-const int LED = 8;
+const int LED = 9;
 const int BUTTON = 14;
 
 unsigned long ledTime;      // moment zapalenia LED
