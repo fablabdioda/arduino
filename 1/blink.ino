@@ -1,4 +1,4 @@
-#define LED 8          // definicje pinów, które będziemy wykorzystywać
+#define LED 9          // definicje pinów, które będziemy wykorzystywać
 #define BUTTON 14
 
 int delayTime = 200;   // zmienna globalna – prędkość migania
