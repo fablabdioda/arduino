@@ -1,5 +1,5 @@
-#define LED 9;
-#define BUTTON 4;
+#define LED 9
+#define BUTTON 14
 
 unsigned long delayTime;    // losowy czas oczekiwania na zapalenie LED
 unsigned long ledTime;      // czas w któ®ym zapaliła się LED
