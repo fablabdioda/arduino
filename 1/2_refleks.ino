@@ -51,3 +51,8 @@ void loop() {
     Serial.println("Nowa runda...");
   }
 }
+
+// ĆWICZENIA:
+// - co to jest ten cały BUZZER? jak go dodać do układu?
+// - jak oszukać grę? no i jak to naprawić?
+// - (*) spróbuj dodać utrudnienie do gry, czyli karę za kliknięcie przy zapalaniu się diody bez dźwięku lub przy dźwięku bez diody
