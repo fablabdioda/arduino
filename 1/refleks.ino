@@ -1,50 +1,53 @@
+// program mierzący czas reakcji użytkownika
+// dioda zapala się po losowym czasie, a użytkownik musi jak najszybciej nacisnąć przycisk
+
 #define LED 9
 #define BUTTON 14
+#define BUZZER 2
 
-unsigned long delayTime;    // losowy czas oczekiwania na zapalenie LED
-unsigned long ledTime;      // czas w któ®ym zapaliła się LED
-bool waiting = false;       // czy LED świeci i czekamy na klik
+unsigned long delayTime;    // czas, po którym LED ma się zapalić (losowy)
+unsigned long ledTime;      // moment (czas), w którym LED została zapalona
+bool waiting = false;       // flaga – czy czekamy na reakcję użytkownika
 
 void setup() {
-  pinMode(LED, OUTPUT);
-  pinMode(BUTTON, INPUT_PULLUP);
-  Serial.begin(9600);
-  
-  randomSeed(analogRead(A0));  //generujemy źródło losowości, odczytując szum z niepodłączonego wejścia analogowego
+  pinMode(LED, OUTPUT);            // ustawiamy pin diody jako wyjście
+  pinMode(BUTTON, INPUT_PULLUP);   // ustawiamy pin przycisku jako wejście (z podciąganiem)
+  Serial.begin(9600);              // uruchamiamy komunikację z komputerem
 
-  delayTime = random(2000, 5000);   // generujemy pierwszy losowy czas, z zakresu 2000 do 5000 ms
-  Serial.println("Nowa runda...");
-  
+  randomSeed(analogRead(A0));      // inicjalizacja generatora liczb losowych (szum z wejścia analogowego)
+
+  delayTime = random(2000, 5000);  // losujemy czas (2–5 sekund) do pierwszego zapalenia LED
+  Serial.println("Nowa runda..."); // informacja o rozpoczęciu gry
 }
 
 void loop() {
 
-  if (!waiting && millis() > delayTime) {   // jeśli nie czekamy na klik i losowy czas już upłynął
-                                            // (funkcja millis() daje milisekundy od startu programu)
-    digitalWrite(LED, HIGH);
-    ledTime = millis();                     // zapisujemy czas, w którym LED się włączyła
-    waiting = true;
+  // zapalenie LED po upływie losowego czasu
+  if (!waiting && millis() > delayTime) {
+    digitalWrite(LED, HIGH);   // zapalamy diodę
+    tone(BUZZER, 1000);
+    ledTime = millis();        // zapisujemy moment zapalenia
+    waiting = true;            // zaczynamy czekać na reakcję
   }
 
-  // Kliknięcie przy zapalonej LED
+  // sprawdzenie, czy użytkownik nacisnął przycisk w odpowiednim momencie
   if (waiting && digitalRead(BUTTON) == LOW) {
 
-    unsigned long reaction = millis() - ledTime;
+    unsigned long reaction = millis() - ledTime;  // obliczamy czas reakcji
 
-    digitalWrite(LED, LOW);
+    digitalWrite(LED, LOW);   // gasimy diodę
+    tone(BUZZER, 1500, 100);
 
     Serial.print("Czas reakcji: ");
     Serial.print(reaction);
-    Serial.println(" ms");
+    Serial.println(" ms");    // wyświetlamy wynik w milisekundach
 
-    delay(300);  // debounce przycisku
+    delay(300);               // proste usunięcie drgań styków (debounce)
 
-    // startujemy nową rundę
-    delayTime = millis() + random(2000, 5000);
-    waiting = false;
+    // przygotowanie nowej rundy
+    delayTime = millis() + random(2000, 5000);  // losujemy nowy czas startu
+    waiting = false;                            // wracamy do stanu oczekiwania
 
     Serial.println("Nowa runda...");
   }
 }
-
-// spróbuj dodać funkcję wykrywającą falstart
