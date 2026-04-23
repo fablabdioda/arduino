@@ -31,6 +31,6 @@ void loop() {
 
 // ĆWICZENIA:
 // - zmień prędkość mrygania, spróbuj przyspieszyć tak, aby nie było widać mrygania - w jakiej jednostce  
-// - odwróć działanie przycisku, tak żeby 
+// - odwróć działanie przycisku, tak żeby zwarcie z zasilaniem było wykrywane
 // - dodać więcej diód do układu i stworzyć ciekawą sekwencję barw, może sygnalizator drogowy?
 // - stworzyć efekt płynnego rozjaśniania (*)
