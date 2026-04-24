@@ -1,0 +1,69 @@
+//Stacja pogodowa bme680 z wyświetlaczem oled. 
+
+//Podłączenie wyświetlacza i modułu bme680:
+// Pin VCC -> VCC arduino, GND -> GND arduino, SLC -> pin 3 arduino, SDA -> pin 2 arduino (to samo wykonaj dla wyświetlacza i modułu!!!)
+
+#include <Wire.h>             // Biblioteka do obsługi magistrali I2C (komunikacja z urządzeniami)
+#include <Adafruit_Sensor.h>  // Podstawowa biblioteka Adafruit dla sensorów (wymagana przez BME680)
+#include <Adafruit_BME680.h>  // Biblioteka dedykowana do obsługi czujnika BME680
+#include <U8g2lib.h>          // Biblioteka do obsługi wyświetlacza OLED (oszczędna i wydajna)
+
+// Inicjalizacja obiektu wyświetlacza:
+// SSD1306_128X64_NONAME - typ sterownika i rozdzielczość ekranu
+// 1 - użycie bufora strony (oszczędza RAM, ale wymaga pętli do/while)
+// HW_I2C - komunikacja sprzętowa przez piny SDA/SCL
+// U8G2_R0 - orientacja ekranu (brak obrotu)
+U8G2_SSD1306_128X64_NONAME_1_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
+
+// Tworzy obiekt "bme", przez który będziemy sterować czujnikiem
+Adafruit_BME680 bme;
+
+void setup() {
+  u8g2.begin(); // Uruchamia komunikację z wyświetlaczem OLED
+  
+  // Próba uruchomienia czujnika BME680 pod adresem 0x77. 
+  // Jeśli się nie uda (!bme.begin), program wpada w nieskończoną pętlę i nic dalej nie robi.
+  if (!bme.begin(0x77)) { while (1); }
+
+  // Konfiguracja czujnika (oversampling = nadpróbkowanie):
+  bme.setTemperatureOversampling(BME680_OS_8X); // Zwiększa dokładność temp. kosztem czasu pomiaru
+  bme.setHumidityOversampling(BME680_OS_2X);    // Ustawia dokładność wilgotności
+  bme.setPressureOversampling(BME680_OS_4X);    // Ustawia dokładność ciśnienia
+  bme.setIIRFilterSize(BME680_FILTER_SIZE_3);   // Filtr wygładzający nagłe skoki pomiarów
+  bme.setGasHeater(0, 0);                       // Wyłącza grzałkę gazu (oszczędność prądu i pamięci)
+}
+
+void loop() {
+  // Wydaje komendę czujnikowi, aby pobrał nowe dane. Jeśli się nie uda, przerywa loop i próbuje od nowa.
+  if (!bme.performReading()) return;
+
+  // Rozpoczęcie pętli rysowania na ekranie (wymagane przy trybie bufora "1")
+  u8g2.firstPage();
+  do {
+    // Ustawienie czcionki (helvB12 = Helvetica Bold, rozmiar 12 pikseli)
+    u8g2.setFont(u8g2_font_helvB12_tf); 
+
+    // --- Sekcja Temperatura ---
+    u8g2.setCursor(0, 18);          // Ustawia "kursor" (miejsce pisania) na 0 piksel poziomy, 18 pionowy
+    u8g2.print("Temp: ");           // Wypisuje tekst stały
+    u8g2.print(bme.temperature, 1); // Wypisuje wartość temperatury z 1 miejscem po przecinku
+    u8g2.print(" C");               // Jednostka
+
+    // --- Sekcja Wilgotność ---
+    u8g2.setCursor(0, 41);          // Ustawia kursor niżej (41 piksel pionowo)
+    u8g2.print("Wilg: ");           // Wypisuje tekst stały
+    u8g2.print(bme.humidity, 1);    // Wypisuje wartość wilgotności
+    u8g2.print(" %");               // Jednostka
+
+    // --- Sekcja Ciśnienie ---
+    u8g2.setCursor(0, 63);          // Ustawia kursor na dole ekranu (63 piksel pionowo)
+    u8g2.print("Cis: ");            // Wypisuje tekst stały
+    // bme.pressure podaje wynik w Pascalach, dzielimy przez 100, żeby mieć hPa. 
+    // "0" oznacza brak miejsc po przecinku (liczba całkowita).
+    u8g2.print(bme.pressure / 100.0, 0); 
+    u8g2.print(" hPa");             // Jednostka
+
+  } while (u8g2.nextPage()); // Pętla powtarza się, dopóki cały obraz nie zostanie wysłany do OLED
+
+  delay(2000); // Czeka 2 sekundy przed kolejnym odczytem i odświeżeniem ekranu
+}
