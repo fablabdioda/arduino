@@ -1,9 +1,23 @@
-#define TRIG_PIN 4    //https://www.tinkercad.com/things/2riKvH5KOOO/editel?returnTo=%2Fclassrooms%2FlvllfBwjg5I%2Factivities%2F4lzUWXGxx4Z
+// TODO: beep do poprawy
+
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#define TRIG_PIN 4
 #define ECHO_PIN 5
 
 #define LED1 6
 #define LED2 7
 #define LED3 8
+
+#define BUZZER_PIN 9
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 32
+#define OLED_RESET -1
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 long duration;
 float distance;
@@ -16,24 +30,57 @@ void setup() {
   pinMode(LED2, OUTPUT);
   pinMode(LED3, OUTPUT);
 
+  pinMode(BUZZER_PIN, OUTPUT);
+
   Serial.begin(9600);
+
+  // Inicjalizacja OLED
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println("OLED error");
+    while (1)
+      ;
+  }
+
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
 }
 
 void loop() {
   // Wyzwolenie pomiaru
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
+
   digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
+
   digitalWrite(TRIG_PIN, LOW);
 
   // Odczyt echa
-  duration = pulseIn(ECHO_PIN, HIGH, 30000); // timeout ~5m
-  distance = duration * 0.034 / 2; // cm
+  duration = pulseIn(ECHO_PIN, HIGH, 30000);
+  distance = duration * 0.034 / 2;
 
   Serial.print("Odleglosc: ");
   Serial.print(distance);
   Serial.println(" cm");
+
+  // Wyświetlanie odległości na OLED
+  display.clearDisplay();
+
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.print("Odleglosc:");
+
+  display.setTextSize(2);
+  display.setCursor(0, 14);
+
+  if (distance == 0) {
+    display.print("---");
+  } else {
+    display.print(distance, 1);
+    display.print(" cm");
+  }
+
+  display.display();
 
   // Gasimy wszystkie LED
   digitalWrite(LED1, LOW);
@@ -41,21 +88,50 @@ void loop() {
   digitalWrite(LED3, LOW);
 
   // Logika LED
-  if (distance > 50 || distance == 0) {   //jeśli dystans jest większy od 50 nic się nie świeci
+  if (distance > 50 || distance == 0) {
     // 0 LED
-  }
-  else if (distance > 30) {   //jeśli dystans jest większy od 30 (ale mniejszy od 51) LED 1 ma stan wysoki
+  } else if (distance > 30) {
     digitalWrite(LED1, HIGH);
-  }
-  else if (distance > 15) {   //jeśli dystans jest większy od 15 (ale mniejszy od 31) LED 1 i 2 ma stan wysoki
+  } else if (distance > 15) {
     digitalWrite(LED1, HIGH);
     digitalWrite(LED2, HIGH);
-  }
-  else {                      //jeśli żaden poprzedni warunek nie jest spełniony wszystkie LED mają stan wysoki
+  } else {
     digitalWrite(LED1, HIGH);
     digitalWrite(LED2, HIGH);
     digitalWrite(LED3, HIGH);
   }
 
-  delay(200);
+// Buzzer: fixed frequency, changing tempo
+if (distance > 50 || distance == 0) {
+  noTone(BUZZER_PIN);  // silence
+} else {
+  int beepInterval;
+
+  // Distance controls tempo
+  if (distance > 30) {
+    beepInterval = 600;   // slow beeping
+  } else if (distance > 15) {
+    beepInterval = 300;   // medium beeping
+  } else {
+    beepInterval = 100;   // very fast beeping
+  }
+
+  static unsigned long lastBeepTime = 0;
+  static bool buzzerState = false;
+
+  unsigned long currentTime = millis();
+
+  if (currentTime - lastBeepTime >= beepInterval) {
+    lastBeepTime = currentTime;
+    buzzerState = !buzzerState;
+
+    if (buzzerState) {
+      tone(BUZZER_PIN, 1000); // fixed frequency: 1000 Hz
+    } else {
+      noTone(BUZZER_PIN);
+    }
+  }
+}
+
+  delay(50);
 }
