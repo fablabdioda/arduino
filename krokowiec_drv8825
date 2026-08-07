@@ -10,7 +10,7 @@ void setup() {
   pinMode(dirPin, OUTPUT);
   pinMode(btnPin, INPUT_PULLUP);
 
-  digitalWrite(dirPin, HIGH);   // forward direction
+  //digitalWrite(dirPin, HIGH);   // forward direction
 }
 
 void doStep(int stepDelay) {
@@ -24,10 +24,19 @@ void loop() {
   int potValue = analogRead(potPin);
 
   // ---- STOP zone ----
-  if (potValue > 20) {  // pot NOT at zero
-    int stepDelay = map(potValue, 20, 1023, 3000, 200);
+if ( potValue < 480) {
+    digitalWrite(dirPin, LOW);
+
+    int stepDelay = map(potValue, 0, 480, 200, 3000);
     doStep(stepDelay);
-  }
+}
+
+if (potValue >= 520) {
+    digitalWrite(dirPin, HIGH);
+
+    int stepDelay = map(potValue, 520, 1023, 3000, 200);
+    doStep(stepDelay);
+}
   // else: pot near 0 → NO stepping → motor stopped
 
   // ---- Single-step button (always works) ----
