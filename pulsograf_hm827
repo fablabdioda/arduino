@@ -1,0 +1,307 @@
+/*
+  Czujnik pulsu HW-827 (klon Pulse Sensor) + OLED 0.91" 128x32 (JMD0.91A, SSD1306, I2C)
+  Płytka: Arduino Pro Micro (ATmega32U4) – w Arduino IDE wybierz "Arduino Leonardo"
+          (albo "SparkFun Pro Micro", jeśli masz zainstalowany pakiet SparkFun).
+
+  Połączenia:
+    HW-827:  +  -> VCC      -  -> GND      S   -> A0
+    OLED:    VCC -> VCC     GND -> GND     SDA -> pin 2    SCL -> pin 3
+
+  Biblioteki (Menedżer bibliotek): "Adafruit SSD1306" + "Adafruit GFX Library"
+
+  Działanie:
+    - próbkowanie 500 Hz w przerwaniu Timer1 (równe odstępy niezależnie od wyświetlacza),
+    - usunięcie składowej stałej + wygładzenie, adaptacyjny próg z histerezą,
+    - BPM = średnia z ostatnich 8 odstępów między uderzeniami,
+    - na OLED: przewijany przebieg (ok. 1,8 s) + BPM + mrugające serce,
+    - dioda RX na płytce miga w rytm pulsu,
+    - opcjonalnie przebieg na Serial Plotter (Narzędzia -> Kreślarka).
+*/
+
+#include <Wire.h>
+#include <util/atomic.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+// ---------------- konfiguracja ----------------
+const uint8_t  PULSE_PIN = A0;
+const uint8_t  OLED_ADDR = 0x3C;        // jeśli ekran nie startuje, spróbuj 0x3D
+const uint16_t FS        = 500;         // częstotliwość próbkowania [Hz]
+const uint8_t  DECIM     = 10;          // co ile próbek nowy punkt wykresu (20 ms)
+const uint8_t  PLOT_W    = 90;          // szerokość wykresu [px]
+const int16_t  MIN_AMP   = 80;          // min. amplituda uznana za puls (skala x10 -> ~8 jedn. ADC)
+const int16_t  MIN_RANGE = 300;         // min. zakres osi Y wykresu (skala x10 -> ~30 jedn. ADC)
+const uint16_t REFRACT   = FS * 3 / 10; // 300 ms – min. odstęp uderzeń (max 200 BPM)
+const uint16_t TIMEOUT   = FS * 3;      // 3 s bez uderzenia = brak sygnału
+#define SERIAL_MODE 1   // 0 = nic, 1 = przebieg po filtrach (Kreślarka), 2 = surowe ADC 500 Hz (diagnostyka)
+#define USE_OLED    1   // 0 = pomiń wyświetlacz (test, czy OLED zakłóca pomiar)
+
+Adafruit_SSD1306 display(128, 32, &Wire, -1);
+
+static const uint8_t PROGMEM HEART[] = {
+  0b01101100,
+  0b11111110,
+  0b11111110,
+  0b11111110,
+  0b01111100,
+  0b00111000,
+  0b00010000
+};
+
+// ------------- dane współdzielone z przerwaniem -------------
+volatile int16_t  plotBuf[PLOT_W];
+volatile uint8_t  plotHead    = 0;      // indeks następnego zapisu = najstarszy punkt
+volatile bool     plotNew     = false;
+volatile uint32_t sampleCount = 0;
+volatile uint32_t lastBeat    = 0;
+volatile uint16_t bpm         = 0;
+volatile bool     signalOk    = false;
+volatile int16_t  thPlot      = 0;      // aktualny próg (do podglądu w Serial Plotterze)
+#if SERIAL_MODE == 2
+volatile uint16_t rawBuf[64];           // kolejka surowych próbek do wysłania
+volatile uint8_t  rawHead = 0, rawTail = 0;
+#endif
+
+// ---------------- przerwanie 500 Hz ----------------
+ISR(TIMER1_COMPA_vect) {
+  static int32_t  baseline = 512L << 8;  // średnia krocząca (skala x256)
+  static int16_t  maBuf[10];             // średnia ruchoma 20 ms -> zera na 50/100/150 Hz
+  static int16_t  maSum = 0;
+  static uint8_t  maIdx = 0;
+  static int32_t  lp = 0;                // dolnoprzepustowy (skala x16 względem maSum)
+  static int32_t  peak = 0, trough = 0;  // obwiednie (skala x256 względem s)
+  static bool     armed = true;
+  static uint16_t ibi[8];
+  static uint8_t  ibiIdx = 0, ibiCnt = 0;
+  static uint16_t medIbi = 0;
+  static uint8_t  decim = 0;
+
+  int16_t  raw = analogRead(PULSE_PIN);
+  uint32_t n   = ++sampleCount;
+  bool clip = (raw < 8 || raw > 1015);   // czujnik w nasyceniu (ruch, za mocny nacisk)
+#if SERIAL_MODE == 2
+  uint8_t nh = (rawHead + 1) & 63;
+  if (nh != rawTail) { rawBuf[rawHead] = raw; rawHead = nh; }
+#endif
+
+  // 1) usunięcie składowej stałej – górnoprzepustowy ~0,3 Hz
+  baseline += (((int32_t)raw << 8) - baseline) >> 8;
+  int16_t ac = raw - (int16_t)(baseline >> 8);
+
+  // 2) średnia ruchoma z 10 próbek (20 ms) – wycina przydźwięk 50 Hz i migotanie lamp 100 Hz
+  maSum += ac - maBuf[maIdx];
+  maBuf[maIdx] = ac;
+  if (++maIdx >= 10) maIdx = 0;
+
+  // 3) dodatkowy dolnoprzepustowy ~5 Hz; wynik s w skali x10 jednostek ADC
+  lp += (((int32_t)maSum << 4) - lp) >> 4;
+  int16_t s = (int16_t)(lp >> 4);
+
+  // 4) obwiednia: szybko łapie szczyty, opada w ~2 s
+  int32_t s8 = (int32_t)s << 8;
+  if (s8 > peak)   peak = s8;   else peak   -= (peak - s8) >> 10;
+  if (s8 < trough) trough = s8; else trough += (s8 - trough) >> 10;
+  int16_t pk   = peak >> 8;
+  int16_t tr   = trough >> 8;
+  int16_t amp  = pk - tr;
+  int16_t thHi = tr + (int32_t)amp * 5 / 8;
+  int16_t thLo = tr + (int32_t)amp * 3 / 8;
+  thPlot = thHi;
+
+  // 5) refrakcja adaptacyjna: min. 300 ms albo 60% typowego odstępu
+  //    (blokuje podwójne liczenie na załamku dykrotycznym)
+  uint16_t refr = REFRACT;
+  if (medIbi) {
+    uint16_t r = (uint32_t)medIbi * 6 / 10;
+    if (r > refr) refr = r;
+  }
+
+  // 6) detekcja uderzenia: przejście przez górny próg z histerezą
+  uint32_t since = n - lastBeat;
+  if (armed && !clip && amp > MIN_AMP && s > thHi && since > refr) {
+    armed = false;
+    if (lastBeat != 0 && since <= 2UL * FS) {          // odstęp 0,3–2 s = 30–200 BPM
+      ibi[ibiIdx] = since;
+      ibiIdx = (ibiIdx + 1) & 7;
+      if (ibiCnt < 8) ibiCnt++;
+
+      // mediana zamiast średniej – pojedyncze błędne uderzenie nie psuje wyniku
+      uint16_t t[8];
+      for (uint8_t i = 0; i < ibiCnt; i++) {
+        uint16_t v = ibi[i];
+        int8_t j = i - 1;
+        while (j >= 0 && t[j] > v) { t[j + 1] = t[j]; j--; }
+        t[j + 1] = v;
+      }
+      medIbi   = t[ibiCnt / 2];
+      bpm      = (60UL * FS) / medIbi;
+      signalOk = (ibiCnt >= 3);
+    } else {                                            // za długa przerwa – od nowa
+      ibiCnt = 0;
+      ibiIdx = 0;
+      medIbi = 0;
+    }
+    lastBeat = n;
+  }
+  if (!armed && s < thLo) armed = true;
+
+  if (signalOk && (n - lastBeat) > TIMEOUT) {
+    signalOk = false;
+    bpm      = 0;
+    ibiCnt   = 0;
+    ibiIdx   = 0;
+    medIbi   = 0;
+  }
+
+  // 7) punkt na wykres co DECIM próbek
+  if (++decim >= DECIM) {
+    decim = 0;
+    plotBuf[plotHead] = s;
+    plotHead = (plotHead + 1 >= PLOT_W) ? 0 : plotHead + 1;
+    plotNew  = true;
+  }
+}
+
+void setupTimer1() {
+  noInterrupts();
+  TCCR1A = 0;
+  TCCR1B = (1 << WGM12) | (1 << CS11);   // tryb CTC, preskaler 8
+  OCR1A  = (F_CPU / 8 / FS) - 1;         // 16 MHz -> 3999, 8 MHz -> 1999
+  TCNT1  = 0;
+  TIMSK1 = (1 << OCIE1A);
+  interrupts();
+}
+
+// ---------------- wyświetlanie ----------------
+void drawScreen(const int16_t *buf, uint8_t head, uint16_t b, bool ok, bool beatNow) {
+  display.clearDisplay();
+
+  // autoskalowanie wykresu
+  int16_t lo = 32767, hi = -32768;
+  for (uint8_t i = 0; i < PLOT_W; i++) {
+    if (buf[i] < lo) lo = buf[i];
+    if (buf[i] > hi) hi = buf[i];
+  }
+  int32_t range = (int32_t)hi - lo;
+  if (range < MIN_RANGE) {                // nie rozciągaj samego szumu na cały ekran
+    int16_t mid = ((int32_t)hi + lo) / 2;
+    lo = mid - MIN_RANGE / 2;
+    range = MIN_RANGE;
+  }
+
+  int16_t prevY = 0;
+  for (uint8_t x = 0; x < PLOT_W; x++) {
+    int16_t v = buf[(head + x) % PLOT_W];  // od najstarszego do najnowszego
+    int16_t y = 31 - (int32_t)(v - lo) * 31 / range;
+    if (y < 0)  y = 0;
+    if (y > 31) y = 31;
+    if (x) display.drawLine(x - 1, prevY, x, y, SSD1306_WHITE);
+    prevY = y;
+  }
+
+  // BPM
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(2);
+  display.setCursor(92, 0);               // 3 znaki x 12 px = 36 px -> mieści się do x=127
+  if (ok && b) {
+    if (b < 100) display.print(' ');
+    display.print(b);
+  } else {
+    display.print(F(" --"));
+  }
+
+  display.setTextSize(1);
+  display.setCursor(93, 22);
+  display.print(F("BPM"));
+  if (beatNow) display.drawBitmap(118, 23, HEART, 8, 7, SSD1306_WHITE);
+
+  display.display();
+}
+
+// ---------------- setup / loop ----------------
+void setup() {
+  Serial.begin(115200);
+  while (!Serial && millis() < 3000) {}   // daj 3 s na otwarcie monitora portu
+
+  Serial.println(F("puls_oled: start"));
+#if USE_OLED
+  if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
+    for (;;) {                            // brak OLED – komunikat + miganie diodą RX
+      Serial.print(F("BLAD: OLED nie odpowiada pod adresem 0x"));
+      Serial.println(OLED_ADDR, HEX);
+      for (uint8_t i = 0; i < 5; i++) { RXLED1; delay(100); RXLED0; delay(100); }
+    }
+  }
+  Serial.println(F("OLED OK"));
+  display.setTextWrap(false);             // nic nie przeskakuje do następnej linii
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 12);
+  display.print(F("Przyloz palec..."));
+  display.display();
+#endif
+
+  analogRead(PULSE_PIN);                  // pierwsza (dłuższa) konwersja poza przerwaniem
+  setupTimer1();
+}
+
+void loop() {
+  static uint32_t lastDraw = 0;
+
+#if SERIAL_MODE == 2
+  // surowe próbki 500 Hz, jedna liczba na linię
+  for (;;) {
+    uint16_t v;
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+      if (rawTail == rawHead) break;
+      v = rawBuf[rawTail];
+      rawTail = (rawTail + 1) & 63;
+    }
+    Serial.println(v);
+  }
+#elif SERIAL_MODE == 1
+  bool     fresh;
+  int16_t  lastVal, thSer;
+  uint16_t bpmSer;
+  ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+    fresh   = plotNew;
+    plotNew = false;
+    lastVal = plotBuf[plotHead == 0 ? PLOT_W - 1 : plotHead - 1];
+    thSer   = thPlot;
+    bpmSer  = bpm;
+  }
+  if (fresh) {                            // gdy port nie jest otwarty, print po prostu nic nie robi
+    Serial.print(F("puls:"));
+    Serial.print(lastVal);
+    Serial.print(F(",prog:"));
+    Serial.print(thSer);
+    Serial.print(F(",bpm:"));
+    Serial.println(bpmSer);
+  }
+#endif
+
+  if (millis() - lastDraw >= 40) {        // ~25 klatek/s
+    lastDraw = millis();
+
+    int16_t  buf[PLOT_W];
+    uint8_t  head;
+    uint16_t bpmNow;
+    bool     ok;
+    uint32_t sinceBeat;
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
+      for (uint8_t i = 0; i < PLOT_W; i++) buf[i] = plotBuf[i];
+      head      = plotHead;
+      bpmNow    = bpm;
+      ok        = signalOk;
+      sinceBeat = sampleCount - lastBeat;
+    }
+
+    bool beatNow = ok && sinceBeat < FS / 6;   // ~170 ms po uderzeniu
+    if (beatNow) RXLED1; else RXLED0;
+
+#if USE_OLED
+    drawScreen(buf, head, bpmNow, ok, beatNow);
+#endif
+  }
+}
